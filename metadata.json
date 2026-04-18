@@ -1,0 +1,6 @@
+{
+  "name": "Lattice IntraSearch",
+  "description": "An internal web search engine for company employees with role-based access, ranked results, and content management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

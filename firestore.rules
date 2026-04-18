@@ -1,0 +1,146 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {userId}
+// Fields:
+//   - uid: string (required)
+//   - email: string (required, email format)
+//   - displayName: string (optional)
+//   - role: string (required, enum: ['admin', 'employee'])
+//   - department: string (optional)
+//   - createdAt: string (optional, date-time)
+//
+// Collection: documents
+// Document ID: {docId}
+// Fields:
+//   - title: string (required)
+//   - description: string (required)
+//   - content: string (optional)
+//   - url: string (required, uri format)
+//   - sourceType: string (required, enum: ['wiki', 'drive', 'slack', 'github'])
+//   - department: string (optional)
+//   - fileType: string (optional, enum: ['pdf', 'doc', 'link', 'message'])
+//   - updatedAt: string (required, date-time)
+//   - tags: array of strings (optional)
+//
+// Collection: users/{userId}/bookmarks
+// Document ID: {bookmarkId}
+// Fields:
+//   - userId: string (required)
+//   - documentId: string (required)
+//   - createdAt: string (optional, date-time)
+//
+// Collection: users/{userId}/history
+// Document ID: {historyId}
+// Fields:
+//   - userId: string (required)
+//   - query: string (required)
+//   - createdAt: string (optional, date-time)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "gk2425266@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string &&
+        (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'employee'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('department' in data) || (data.department is string && data.department.size() < 100));
+    }
+
+    function isValidDocument(data) {
+      return data.keys().hasAll(['title', 'description', 'url', 'sourceType', 'updatedAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.description is string && data.description.size() < 1000 &&
+             isValidUrl(data.url) &&
+             data.sourceType in ['wiki', 'drive', 'slack', 'github'] &&
+             isValidDateString(data.updatedAt) &&
+             (!('content' in data) || (data.content is string && data.content.size() < 50000)) &&
+             (!('fileType' in data) || data.fileType in ['pdf', 'doc', 'link', 'message']);
+    }
+
+    function isValidBookmark(data, userId) {
+      return data.keys().hasAll(['userId', 'documentId']) &&
+             data.userId == userId &&
+             data.userId == request.auth.uid &&
+             data.documentId is string;
+    }
+
+    function isValidHistory(data, userId) {
+      return data.keys().hasAll(['userId', 'query']) &&
+             data.userId == userId &&
+             data.userId == request.auth.uid &&
+             data.query is string && data.query.size() > 0 && data.query.size() < 500;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == 'employee' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /documents/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidDocument(request.resource.data);
+    }
+
+    match /users/{userId}/bookmarks/{bookmarkId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidBookmark(request.resource.data, userId);
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/history/{historyId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidHistory(request.resource.data, userId);
+      allow delete: if isOwner(userId);
+    }
+  }
+}
